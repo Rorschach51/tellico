@@ -30,6 +30,14 @@ jobs:
             -Uri "https://raw.githubusercontent.com/KDE/craft/master/setup/install_craft.ps1" `
             -OutFile $bootstrap
 
+          # GitHub's Windows image exposes Unix/MinGW tools ahead of the MSVC
+          # toolchain. Craft explicitly rejects those conflicting PATH entries.
+          $env:PATH = (($env:PATH -split ";") |
+            Where-Object {
+              $_ -notmatch "\\Git\\bin$" -and
+              $_ -notmatch "\\mingw64\\bin$"
+            }) -join ";"
+
           & $bootstrap -root $craftRoot -use-defaults
           if ($LASTEXITCODE -ne 0) {
             throw "KDE Craft bootstrap failed with exit code $LASTEXITCODE"
