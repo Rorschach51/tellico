@@ -1,0 +1,279 @@
+diff --git a/src/entryeditdialog.cpp b/src/entryeditdialog.cpp
+index 3aaefa5..422cd49 100644
+--- a/src/entryeditdialog.cpp
++++ b/src/entryeditdialog.cpp
+@@ -63,6 +63,10 @@ using Tellico::EntryEditDialog;
+ EntryEditDialog::EntryEditDialog(QWidget* parent_)
+     : QDialog(parent_),
+       m_tabs(new GUI::TabWidget(this)),
++      m_buttonBox(new QDialogButtonBox(QDialogButtonBox::Help|
++                                       QDialogButtonBox::Close|
++                                       QDialogButtonBox::Apply, this)),
++      m_embeddedMode(false),
+       m_modified(false),
+       m_isOrphan(false),
+       m_isWorking(false),
+@@ -73,30 +77,55 @@ EntryEditDialog::EntryEditDialog(QWidget* parent_)
+   setLayout(mainLayout);
+   mainLayout->addWidget(m_tabs);
+ 
+-  QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Help|
+-                                                     QDialogButtonBox::Close|
+-                                                     QDialogButtonBox::Apply);
+-  connect(buttonBox, &QDialogButtonBox::helpRequested, this, &EntryEditDialog::slotHelp);
+-  mainLayout->addWidget(buttonBox);
++  connect(m_buttonBox, &QDialogButtonBox::helpRequested, this, &EntryEditDialog::slotHelp);
++  mainLayout->addWidget(m_buttonBox);
+ 
+   m_newButton = new QPushButton();
+-  buttonBox->addButton(m_newButton, QDialogButtonBox::ActionRole);
++  m_buttonBox->addButton(m_newButton, QDialogButtonBox::ActionRole);
+   m_newButton->setDefault(true);
+   KGuiItem::assign(m_newButton, KGuiItem(i18n("&New Entry")));
+ 
+-  m_saveButton = buttonBox->button(QDialogButtonBox::Apply);
++  m_saveButton = m_buttonBox->button(QDialogButtonBox::Apply);
+   m_saveButton->setEnabled(false);
+   KGuiItem save = KStandardGuiItem::save();
+   save.setText(i18n("Sa&ve Entry"));
+   KGuiItem::assign(m_saveButton, save);
+ 
+-  connect(buttonBox->button(QDialogButtonBox::Close), &QAbstractButton::clicked, this, &EntryEditDialog::slotClose);
++  connect(m_buttonBox->button(QDialogButtonBox::Close), &QAbstractButton::clicked, this, &EntryEditDialog::slotClose);
+   connect(m_saveButton, &QAbstractButton::clicked, this, &EntryEditDialog::slotHandleSave);
+   connect(m_newButton, &QAbstractButton::clicked, this, &EntryEditDialog::slotHandleNew);
+ }
+ 
+ EntryEditDialog::~EntryEditDialog() = default;
+ 
++void EntryEditDialog::setEmbeddedMode(bool embedded_) {
++  if(m_embeddedMode == embedded_) {
++    return;
++  }
++  m_embeddedMode = embedded_;
++  if(m_embeddedMode) {
++    setWindowFlags(Qt::Widget);
++    m_buttonBox->hide();
++    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
++    connect(qApp, &QApplication::focusChanged,
++            this, &EntryEditDialog::slotFocusChanged,
++            Qt::UniqueConnection);
++  } else {
++    disconnect(qApp, &QApplication::focusChanged,
++               this, &EntryEditDialog::slotFocusChanged);
++    m_buttonBox->show();
++  }
++}
++
++void EntryEditDialog::slotFocusChanged(QWidget* old_, QWidget* now_) {
++  if(!m_embeddedMode || !m_modified || !old_ || !isAncestorOf(old_)) {
++    return;
++  }
++  if(!now_ || !isAncestorOf(now_)) {
++    slotHandleSave();
++  }
++}
++
+ void EntryEditDialog::reject() {
+   slotClose();
+ }
+@@ -647,6 +676,10 @@ void EntryEditDialog::slotSetModified(bool mod_/*=true*/) {
+ }
+ 
+ bool EntryEditDialog::queryModified() {
++  if(m_embeddedMode && m_modified) {
++    slotHandleSave();
++    return !m_modified;
++  }
+   bool ok = true;
+   // assume that if the dialog is hidden, we shouldn't ask the user to modify changes
+   if(!isVisible()) {
+@@ -765,12 +798,23 @@ void EntryEditDialog::fieldChanged(Tellico::Data::FieldPtr field_) {
+ 
+ void EntryEditDialog::showEvent(QShowEvent* event_) {
+   QDialog::showEvent(event_);
++  if(m_embeddedMode) {
++    return;
++  }
+   KConfigGroup config(KSharedConfig::openConfig(), QLatin1String(dialogOptionsString));
+   KWindowConfig::restoreWindowSize(windowHandle(), config);
+   resize(windowHandle()->size()); // workaround for QTBUG-40584
+ }
+ 
+ void EntryEditDialog::hideEvent(QHideEvent* event_) {
++  if(m_embeddedMode) {
++    if(queryModified()) {
++      QDialog::hideEvent(event_);
++    } else {
++      event_->ignore();
++    }
++    return;
++  }
+   KConfigGroup config(KSharedConfig::openConfig(), QLatin1String(dialogOptionsString));
+   KWindowConfig::saveWindowSize(windowHandle(), config);
+   config.sync();
+diff --git a/src/entryeditdialog.h b/src/entryeditdialog.h
+index 71e5635..6bfd74b 100644
+--- a/src/entryeditdialog.h
++++ b/src/entryeditdialog.h
+@@ -31,6 +31,8 @@
+ #include <QDialog>
+ #include <QHash>
+ 
++class QDialogButtonBox;
++
+ namespace Tellico {
+   namespace GUI {
+     class TabWidget;
+@@ -49,6 +51,14 @@ public:
+   EntryEditDialog(QWidget* parent);
+   ~EntryEditDialog();
+ 
++  /**
++   * Embeds the native editor in the main window instead of using it as a
++   * separate dialog. In embedded mode, changes are saved automatically when
++   * focus leaves the editor or another entry is selected.
++   */
++  void setEmbeddedMode(bool embedded);
++  bool isEmbeddedMode() const { return m_embeddedMode; }
++
+   /**
+    * Checks to see if any data needs to be saved. Returns @p true if it's ok to continue with
+    * saving or closing the widget.
+@@ -128,6 +138,8 @@ public Q_SLOTS:
+ protected Q_SLOTS:
+   void slotHelp();
+ 
++  void slotFocusChanged(QWidget* old, QWidget* now);
++
+ private Q_SLOTS:
+   void fieldValueChanged(Tellico::Data::FieldPtr field);
+   void fieldChanged(Tellico::Data::FieldPtr field);
+@@ -156,9 +168,11 @@ private:
+   GUI::TabWidget* m_tabs;
+   QHash<QString, GUI::FieldWidget*> m_widgetDict;
+ 
++  QDialogButtonBox* m_buttonBox;
+   QPushButton* m_newButton;
+   QPushButton* m_saveButton;
+ 
++  bool m_embeddedMode;
+   bool m_modified;
+   Data::FieldList m_modifiedFields;
+   bool m_isOrphan;
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 56e7fcf..8eed39c 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -151,6 +151,9 @@ using Tellico::MainWindow;
+ 
+ MainWindow::MainWindow(QWidget* parent_/*=0*/) : KXmlGuiWindow(parent_),
+     m_updateAll(nullptr),
++    m_dummyWindow(nullptr),
++    m_entryArea(nullptr),
++    m_entryAreaLayout(nullptr),
+     m_statusBar(nullptr),
+     m_editDialog(nullptr),
+     m_groupView(nullptr),
+@@ -226,11 +229,15 @@ void MainWindow::slotInit() {
+     return;
+   }
+ 
+-  m_editDialog = new EntryEditDialog(this);
++  m_editDialog = new EntryEditDialog(m_entryArea);
++  m_editDialog->setEmbeddedMode(true);
++  m_entryAreaLayout->addWidget(m_editDialog);
++  m_entryView->hide();
++  m_editDialog->show();
+   Controller::self()->addObserver(m_editDialog);
+ 
+-  m_toggleEntryEditor->setChecked(Config::showEditWidget());
+-  slotToggleEntryEditor();
++  m_toggleEntryEditor->setChecked(true);
++  m_toggleEntryEditor->setEnabled(false);
+   m_lockLayout->setActive(Config::lockLayout());
+ 
+   initConnections();
+@@ -801,8 +808,12 @@ void MainWindow::initView() {
+   // using QMainWindow::setCorner does not seem to work
+   // https://wiki.qt.io/Technical_FAQ#Is_it_possible_for_either_the_left_or_right_dock_areas_to_have_full_height_of_their_side_rather_than_having_the_bottom_take_the_full_width.3F
+   m_dummyWindow = new QMainWindow(this);
++  m_entryArea = new QWidget(m_dummyWindow);
++  m_entryAreaLayout = new QVBoxLayout(m_entryArea);
++  m_entryAreaLayout->setContentsMargins(0, 0, 0, 0);
++  m_entryAreaLayout->addWidget(m_entryView);
+   m_entryView->setWhatsThis(i18n("<qt>The <i>Entry View</i> shows a formatted view of the entry's contents.</qt>"));
+-  m_dummyWindow->setCentralWidget(m_entryView);
++  m_dummyWindow->setCentralWidget(m_entryArea);
+   m_dummyWindow->setWindowFlags(Qt::Widget);
+   setCentralWidget(m_dummyWindow);
+ 
+@@ -964,7 +975,7 @@ void MainWindow::saveOptions() {
+   saveMainWindowSettings(config);
+   config.writeEntry(QStringLiteral("Central Dock State"), m_dummyWindow->saveState());
+ 
+-  Config::setShowEditWidget(m_toggleEntryEditor->isChecked());
++  Config::setShowEditWidget(true);
+   // check any single dock widget, they all get locked together
+   Config::setLockLayout(m_groupViewDock->isLocked());
+ 
+@@ -995,8 +1006,10 @@ void MainWindow::saveOptions() {
+   }
+ 
+   // this is used in the EntryEditDialog constructor, too
+-  KConfigGroup editDialogConfig(KSharedConfig::openConfig(), QStringLiteral("Edit Dialog Options"));
+-  KWindowConfig::saveWindowSize(m_editDialog->windowHandle(), editDialogConfig);
++  if(!m_editDialog->isEmbeddedMode()) {
++    KConfigGroup editDialogConfig(KSharedConfig::openConfig(), QStringLiteral("Edit Dialog Options"));
++    KWindowConfig::saveWindowSize(m_editDialog->windowHandle(), editDialogConfig);
++  }
+ 
+   saveCollectionOptions(Data::Document::self()->collection());
+   Config::self()->save();
+@@ -1564,6 +1577,12 @@ void MainWindow::slotEditDeselect() {
+ }
+ 
+ void MainWindow::slotToggleEntryEditor() {
++  if(m_editDialog->isEmbeddedMode()) {
++    m_toggleEntryEditor->setChecked(true);
++    m_editDialog->show();
++    m_editDialog->setFocus();
++    return;
++  }
+   if(m_toggleEntryEditor->isChecked()) {
+     m_editDialog->show();
+   } else {
+@@ -2037,6 +2056,11 @@ void MainWindow::slotEditDialogFinished() {
+ }
+ 
+ void MainWindow::slotShowEntryEditor() {
++  if(m_editDialog->isEmbeddedMode()) {
++    m_editDialog->show();
++    m_editDialog->setFocus();
++    return;
++  }
+   m_toggleEntryEditor->setChecked(true);
+   m_editDialog->show();
+   activateDialog(m_editDialog);
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 17f890a..027b6d9 100644
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -47,6 +47,8 @@ class KActionMenu;
+ class QCloseEvent;
+ class QDockWidget;
+ class QSignalMapper;
++class QVBoxLayout;
++class QWidget;
+ 
+ namespace Tellico {
+ // forward declarations
+@@ -488,6 +490,8 @@ private:
+   GUI::LineEdit* m_quickFilter;
+ 
+   QMainWindow* m_dummyWindow;
++  QWidget* m_entryArea;
++  QVBoxLayout* m_entryAreaLayout;
+   GUI::DockWidget* m_groupViewDock;
+   GUI::DockWidget* m_collectionViewDock;
+ 
