@@ -24,11 +24,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $craftRoot = "C:\CraftRoot"
-          $bootstrap = Join-Path $env:RUNNER_TEMP "install_craft.ps1"
-
-          Invoke-WebRequest `
-            -Uri "https://raw.githubusercontent.com/KDE/craft/master/setup/install_craft.ps1" `
-            -OutFile $bootstrap
+          $craftSource = Join-Path $env:RUNNER_TEMP "craft-source"
 
           # GitHub's Windows image exposes Unix/MinGW tools ahead of the MSVC
           # toolchain. Craft explicitly rejects those conflicting PATH entries.
@@ -38,7 +34,26 @@ jobs:
               $_ -notmatch "\\mingw64\\bin$"
             }) -join ";"
 
-          & $bootstrap -root $craftRoot -use-defaults
+          git clone --depth 1 https://invent.kde.org/packaging/craft.git $craftSource
+          if ($LASTEXITCODE -ne 0) {
+            throw "Downloading KDE Craft failed with exit code $LASTEXITCODE"
+          }
+
+          # gettext 0.22.3 currently fails to link against iconv with the
+          # Visual Studio 2022 image. KDE Craft still carries its stable 0.21
+          # recipe, so select it before Craft installs its own dependencies.
+          $gettextRecipe = Join-Path $craftSource "blueprints\libs\gettext\gettext.py"
+          $gettextContent = Get-Content $gettextRecipe -Raw
+          $gettextContent = $gettextContent.Replace(
+            'self.defaultTarget = "0.22.3"',
+            'self.defaultTarget = "0.21"'
+          )
+          Set-Content -Path $gettextRecipe -Value $gettextContent -Encoding utf8
+
+          python "$craftSource\setup\CraftBootstrap.py" `
+            --prefix $craftRoot `
+            --use-defaults `
+            --localDev $craftSource
           if ($LASTEXITCODE -ne 0) {
             throw "KDE Craft bootstrap failed with exit code $LASTEXITCODE"
           }
