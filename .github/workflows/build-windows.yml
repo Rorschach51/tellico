@@ -1,0 +1,57 @@
+name: Build Windows installer
+
+on:
+  push:
+    branches:
+      - inline-entry-edit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Tellico fork
+        uses: actions/checkout@v4
+
+      - name: Prepare Python certificates
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip certifi
+
+      - name: Install KDE Craft
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://raw.githubusercontent.com/KDE/craft/master/setup/CraftBootstrap.py -OutFile "$env:RUNNER_TEMP\CraftBootstrap.py"
+          python "$env:RUNNER_TEMP\CraftBootstrap.py" --prefix C:\CraftRoot --branch master --use-defaults
+
+      - name: Build and package custom Tellico
+        shell: powershell
+        run: |
+          . C:\CraftRoot\craft\craftenv.ps1
+          craft --ignoreInstalled --options "tellico.srcDir=$env:GITHUB_WORKSPACE" --package tellico
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Collect installer
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\windows-installer" | Out-Null
+          $installers = Get-ChildItem -Path C:\CraftRoot\tmp -Filter "tellico-*.exe" -Recurse
+          if (-not $installers) {
+            Write-Error "No Tellico installer was produced by Craft."
+            exit 1
+          }
+          $installers | Copy-Item -Destination "$env:GITHUB_WORKSPACE\windows-installer"
+          Get-ChildItem "$env:GITHUB_WORKSPACE\windows-installer"
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tellico-EditableCompact-Windows
+          path: windows-installer/*.exe
+          if-no-files-found: error
+          retention-days: 14
