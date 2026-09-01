@@ -92,6 +92,7 @@ public Q_SLOTS:
 
 private Q_SLOTS:
   void slotReloadEntry();
+  void slotTellicoAction(const QUrl& url);
 
 protected:
   void changeEvent(QEvent* event) override;
