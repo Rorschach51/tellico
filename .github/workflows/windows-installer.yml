@@ -1,0 +1,80 @@
+name: Build Tellico Direct Edit for Windows
+
+on:
+  push:
+    branches:
+      - integrated-entry-editor
+  workflow_dispatch:
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out Tellico
+        uses: actions/checkout@v4
+
+      - name: Apply the direct-edit modification
+        shell: pwsh
+        run: git apply tellico-direct-edit.patch
+
+      - name: Bootstrap KDE Craft and build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $craftRoot = "C:\CraftRoot"
+          $bootstrap = Join-Path $env:RUNNER_TEMP "install_craft.ps1"
+
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/KDE/craft/master/setup/install_craft.ps1" `
+            -OutFile $bootstrap
+
+          & $bootstrap -installRoot $craftRoot -useDefaults
+          if ($LASTEXITCODE -ne 0) {
+            throw "KDE Craft bootstrap failed with exit code $LASTEXITCODE"
+          }
+
+          . "$craftRoot\craft\craftenv.ps1"
+
+          craft --install-deps extragear/tellico
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installing Tellico dependencies failed with exit code $LASTEXITCODE"
+          }
+
+          craft --src-dir $env:GITHUB_WORKSPACE --install extragear/tellico
+          if ($LASTEXITCODE -ne 0) {
+            throw "Building the modified Tellico failed with exit code $LASTEXITCODE"
+          }
+
+          craft --src-dir $env:GITHUB_WORKSPACE `
+            --options "[Packager]PackageType=NullsoftInstallerPackager" `
+            --package extragear/tellico
+          if ($LASTEXITCODE -ne 0) {
+            throw "Creating the Windows installer failed with exit code $LASTEXITCODE"
+          }
+
+          $output = Join-Path $env:GITHUB_WORKSPACE "online-build-output"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+
+          $artifacts = Get-ChildItem "$craftRoot\tmp" -Recurse -File |
+            Where-Object {
+              $_.Name -match "tellico" -and
+              $_.Extension -in ".exe", ".7z", ".zip"
+            }
+
+          if (-not $artifacts) {
+            throw "Craft completed but no Tellico installer was found."
+          }
+
+          $artifacts | ForEach-Object {
+            Copy-Item $_.FullName -Destination $output -Force
+          }
+
+      - name: Publish installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tellico-4.2.1-Direct-Edit-Windows
+          path: online-build-output/*
+          if-no-files-found: error
+          retention-days: 14
