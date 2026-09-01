@@ -26,6 +26,19 @@ jobs:
       - name: Install KDE Craft
         shell: powershell
         run: |
+          # GitHub's Windows image exposes Git's sh.exe and a separate MinGW
+          # toolchain in PATH. Craft explicitly warns that these conflict with
+          # its own MSYS/MSVC environment, so remove only those entries.
+          $env:PATH = (($env:PATH -split ';') | Where-Object {
+            $_ -and
+            ($_ -notmatch '(?i)\\Git\\bin\\?$') -and
+            ($_ -notmatch '(?i)^C:\\mingw64\\bin\\?$')
+          }) -join ';'
+
+          Write-Host "Checking conflicting tools before Craft bootstrap..."
+          Get-Command sh -ErrorAction SilentlyContinue | Format-List Source
+          Get-Command gcc -ErrorAction SilentlyContinue | Format-List Source
+
           Invoke-WebRequest https://raw.githubusercontent.com/KDE/craft/master/setup/CraftBootstrap.py -OutFile "$env:RUNNER_TEMP\CraftBootstrap.py"
           python "$env:RUNNER_TEMP\CraftBootstrap.py" --prefix C:\CraftRoot --branch master --use-defaults
 
