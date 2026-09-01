@@ -4,6 +4,7 @@ set(ENTRY_FILES
     Album.xsl
     Compact.xsl
     Default.xsl
+    EditableCompact.xsl
     Fancy.xsl
     Video.xsl
 )
