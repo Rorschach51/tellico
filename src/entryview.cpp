@@ -27,6 +27,7 @@
 #include "field.h"
 #include "collection.h"
 #include "document.h"
+#include "tellico_kernel.h"
 #include "translators/xslthandler.h"
 #include "translators/tellicoxmlexporter.h"
 #include "images/imagefactory.h"
@@ -54,6 +55,9 @@
 #include <QDesktopServices>
 #include <QMenu>
 #include <QContextMenuEvent>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QUrlQuery>
 
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
@@ -128,7 +132,7 @@ EntryView::EntryView(QWidget* parent_) : QWebEngineView(parent_)
   }
 
   connect(page, &EntryViewPage::signalTellicoAction,
-          this, &EntryView::signalTellicoAction);
+          this, &EntryView::slotTellicoAction);
 
   clear(); // needed for initial layout
 }
@@ -281,7 +285,6 @@ void EntryView::setXSLTFile(const QString& file_) {
         str += i18n("Tellico is unable to locate the default entry stylesheet.");
         str += QLatin1Char(' ');
         str += i18n("Please check your installation.");
-        str += QLatin1String("</qt>");
         KMessageBox::error(this, str);
         clear();
         return;
@@ -367,6 +370,107 @@ void EntryView::slotReloadEntry() {
   }
   delete m_tempFile;
   m_tempFile = nullptr;
+}
+
+void EntryView::slotTellicoAction(const QUrl& url_) {
+  if(url_.fileName() != QLatin1String("edit_field")) {
+    Q_EMIT signalTellicoAction(url_);
+    return;
+  }
+
+  if(!m_entry || !m_entry->collection()) {
+    return;
+  }
+
+  const QUrlQuery query(url_);
+  const QString fieldName = query.queryItemValue(QStringLiteral("field"));
+  if(fieldName.isEmpty()) {
+    return;
+  }
+
+  Data::FieldPtr field = m_entry->collection()->fieldByName(fieldName);
+  if(!field ||
+     field->hasFlag(Data::Field::NoEdit) ||
+     field->hasFlag(Data::Field::Derived) ||
+     field->type() == Data::Field::Image ||
+     field->type() == Data::Field::Table) {
+    return;
+  }
+
+  const QString oldValue = m_entry->field(field);
+  QString newValue;
+  bool ok = false;
+
+  switch(field->type()) {
+    case Data::Field::Choice:
+    case Data::Field::Rating: {
+      QStringList values = field->allowed();
+      if(values.isEmpty()) {
+        newValue = QInputDialog::getText(this,
+                                         i18n("Edit Field"),
+                                         field->title(),
+                                         QLineEdit::Normal,
+                                         oldValue,
+                                         &ok);
+      } else {
+        if(!oldValue.isEmpty() && !values.contains(oldValue)) {
+          values.prepend(oldValue);
+        }
+        int current = values.indexOf(oldValue);
+        if(current < 0) {
+          current = 0;
+        }
+        newValue = QInputDialog::getItem(this,
+                                         i18n("Edit Field"),
+                                         field->title(),
+                                         values,
+                                         current,
+                                         false,
+                                         &ok);
+      }
+      break;
+    }
+    case Data::Field::Bool: {
+      const QStringList values = QStringList() << i18n("No") << i18n("Yes");
+      const QString selected = QInputDialog::getItem(this,
+                                                      i18n("Edit Field"),
+                                                      field->title(),
+                                                      values,
+                                                      oldValue.isEmpty() ? 0 : 1,
+                                                      false,
+                                                      &ok);
+      if(ok) {
+        newValue = selected == values.at(1) ? QStringLiteral("true") : QString();
+      }
+      break;
+    }
+    case Data::Field::Para:
+      newValue = QInputDialog::getMultiLineText(this,
+                                                i18n("Edit Field"),
+                                                field->title(),
+                                                oldValue,
+                                                &ok);
+      break;
+    default:
+      newValue = QInputDialog::getText(this,
+                                       i18n("Edit Field"),
+                                       field->title(),
+                                       QLineEdit::Normal,
+                                       oldValue,
+                                       &ok);
+      break;
+  }
+
+  if(!ok || newValue == oldValue) {
+    return;
+  }
+
+  Data::EntryList oldEntries;
+  oldEntries << Data::EntryPtr(new Data::Entry(*m_entry));
+  m_entry->setField(field, newValue);
+  Kernel::self()->modifyEntries(oldEntries,
+                                Data::EntryList() << m_entry,
+                                QStringList() << field->name());
 }
 
 void EntryView::addXSLTStringParam(const QByteArray& name_, const QByteArray& value_) {
