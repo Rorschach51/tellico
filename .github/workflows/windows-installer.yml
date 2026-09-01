@@ -30,7 +30,7 @@ jobs:
             -Uri "https://raw.githubusercontent.com/KDE/craft/master/setup/install_craft.ps1" `
             -OutFile $bootstrap
 
-          & $bootstrap -installRoot $craftRoot -useDefaults
+          & $bootstrap -root $craftRoot -use-defaults
           if ($LASTEXITCODE -ne 0) {
             throw "KDE Craft bootstrap failed with exit code $LASTEXITCODE"
           }
